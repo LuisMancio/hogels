@@ -1,5 +1,5 @@
 """
-rainbow_hologram_parameters.py
+rainbow_grattings_generator.py
 
 Purpose
 -------
@@ -48,7 +48,9 @@ Physical background
        h/d = arccos(1 - 2*(I/I0)) / (2*pi)
 
    I/I0 here is simply the normalized pixel brightness (0..1) of that
-   image's color channel at that pixel position.
+   image's color channel at that pixel position -- linearized from sRGB
+   first (see LINEARIZE_SRGB / srgb_to_linear) since PNG pixel values are
+   gamma-encoded, not physical intensity.
 
 Explicitly OUT OF SCOPE for this first version (add later, as separate
 processing steps once this baseline pipeline is validated):
@@ -67,6 +69,38 @@ A single CSV file (long format) with one row per
 period and duty cycle for that grating, plus the fixed geometry/reference
 parameters repeated for convenience. A downstream GDS-generation script can
 group rows by (image_index, channel) to draw one grating "type" at a time.
+
+Rows are skipped whenever the resulting grating LINE WIDTH (duty_cycle *
+period_um) would fall below MIN_LINE_WIDTH_UM -- this covers true black
+pixels (duty cycle exactly 0) but also near-black ones. In practice, PNG
+resize (LANCZOS) ringing near a sharp edge can leave isolated pixels at
+raw value 1/255 where the source was meant to be pure black; that maps to
+a nonzero but physically absurd sub-nanometer line width if not filtered.
+Skipping by line width (rather than by raw intensity) ties the cutoff to
+something a fab engineer actually cares about -- no real process can pattern
+a line thinner than MIN_LINE_WIDTH_UM anyway, so drawing it would just be
+dead weight in the table (and later in the GDS).
+
+Each row also carries cell_col_index (0/1/2, position of this channel's
+column -- R/G/B -- within the 60x60 um mother cell) and cell_row_index
+(0..4, position of this image's row within the mother cell, following the
+IMAGE_PATHS/ALPHA_DEG order). This gives the downstream GDS-generation
+script the mini-grating's position inside its mother cell explicitly,
+instead of having it re-derive that from channel name / image_index.
+
+num_macro_pixels_x / num_macro_pixels_y (the full derived grid size, same
+value repeated on every row) are also included so a downstream script knows
+the true canvas extent even if the outer rows/columns were skipped for
+being all-black.
+
+COORDINATE CONVENTION WARNING: macro_pixel_row follows numpy/image
+convention, i.e. row 0 is the TOP of the source image and row increases
+DOWNWARD. GDS/gdsfactory coordinates increase UPWARD (standard Cartesian y).
+A downstream script that maps macro_pixel_row directly to a y coordinate
+will produce a vertically flipped (upside-down) layout -- it must first
+invert the row, e.g. y = (num_macro_pixels_y - 1 - macro_pixel_row) * pitch.
+macro_pixel_col needs no such flip (left-to-right matches in both
+conventions).
 """
 
 import numpy as np
@@ -120,8 +154,31 @@ MACRO_PIXEL_PITCH_UM = 60.0
 # NUM_MACRO_PIXELS_X = 36 gives NUM_MACRO_PIXELS_Y = 20 (36/1.8 = 20).
 NUM_MACRO_PIXELS_X = 250
 
+# Minimum fabricable grating line width (micrometers). Any pixel whose
+# duty_cycle * period_um would produce a thinner line than this is skipped
+# entirely (treated the same as a black pixel -- no grating drawn), instead
+# of writing a row no real process could pattern anyway.
+#
+# This is a conservative, GENERIC sanity floor (roughly the edge of what
+# advanced e-beam can do), not a stand-in for your actual chosen process's
+# resolution -- e.g. if you end up on the 1.5 um DMD/UV tool discussed in
+# the project notes, you'd want this closer to 1.5 um (and likely also
+# revisit the grating period itself, see fabrication summary caveats).
+MIN_LINE_WIDTH_UM = 0.1
+
+# Whether to convert pixel values from sRGB (gamma-encoded -- what PNGs,
+# including Blender renders, normally store) to linear light before treating
+# them as I/I0 in the duty cycle formula. Physically more correct; set to
+# False to use the raw sRGB values directly instead.
+LINEARIZE_SRGB = True
+
 # Output table path.
 OUTPUT_CSV_PATH = "rainbow_hologram_layer_table.csv"
+
+# Plain-text fabrication summary path -- a human-readable rundown of period,
+# duty cycle, feature width and write-area ranges, meant to be handed to
+# fab technicians to help pick a process/tool (see write_fabrication_summary).
+FAB_SUMMARY_TXT_PATH = "rainbow_hologram_fab_summary.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +238,24 @@ def intensity_to_duty_cycle(intensity_norm: np.ndarray) -> np.ndarray:
     return duty_cycle
 
 
+def srgb_to_linear(channel_srgb: np.ndarray) -> np.ndarray:
+    """
+    Converts sRGB-encoded (gamma) values in [0, 1] to linear light intensity,
+    using the standard sRGB EOTF:
+
+        c_linear = c / 12.92                     if c <= 0.04045
+                 = ((c + 0.055) / 1.055) ** 2.4   otherwise
+
+    PNG images (e.g. Blender renders) store pixel values in sRGB space, not
+    linear light. Treating them as I/I0 directly would bias the perceived
+    brightness -> diffraction efficiency mapping, since sRGB's gamma curve
+    is not proportional to physical intensity.
+    """
+    channel_srgb = np.clip(channel_srgb, 0.0, 1.0)
+    low = channel_srgb <= 0.04045
+    return np.where(low, channel_srgb / 12.92, ((channel_srgb + 0.055) / 1.055) ** 2.4)
+
+
 # ---------------------------------------------------------------------------
 # IMAGE LOADING
 # ---------------------------------------------------------------------------
@@ -213,10 +288,15 @@ def load_image_as_normalized_rgb(path: str, target_size_xy: tuple) -> np.ndarray
     output pixel becomes exactly one macro-pixel cell in the hologram.
     Pass a target_size_xy that matches your source images' aspect ratio
     (see derive_macro_pixel_grid_size) to avoid distortion.
+
+    If LINEARIZE_SRGB is True, values are converted from sRGB to linear
+    light (see srgb_to_linear) before being returned.
     """
     img = Image.open(path).convert("RGB")
     img = img.resize(target_size_xy, resample=Image.LANCZOS)
     arr = np.asarray(img).astype(np.float64) / 255.0
+    if LINEARIZE_SRGB:
+        arr = srgb_to_linear(arr)
     return arr  # shape: (height, width, 3), values in [0, 1]
 
 
@@ -224,7 +304,7 @@ def load_image_as_normalized_rgb(path: str, target_size_xy: tuple) -> np.ndarray
 # MAIN PIPELINE
 # ---------------------------------------------------------------------------
 
-def build_layer_table() -> pd.DataFrame:
+def build_layer_table() -> tuple:
     if len(IMAGE_PATHS) != len(ALPHA_DEG):
         raise ValueError("IMAGE_PATHS and ALPHA_DEG must have the same length.")
 
@@ -267,8 +347,19 @@ def build_layer_table() -> pd.DataFrame:
             channel_plane = rgb[:, :, channel_index[channel]]  # (rows, cols)
             duty_cycle_plane = intensity_to_duty_cycle(channel_plane)
 
+            # Position of this (channel, image) mini-grating within the
+            # 60x60 um mother cell: column by channel (R/G/B), row by image
+            # (follows IMAGE_PATHS/ALPHA_DEG order).
+            cell_col_index = channel_index[channel]
+            cell_row_index = img_idx - 1
+
             for row in range(num_macro_pixels_y):
                 for col in range(num_macro_pixels_x):
+                    intensity = channel_plane[row, col]
+                    duty_cycle = duty_cycle_plane[row, col]
+                    if duty_cycle * period_um < MIN_LINE_WIDTH_UM:
+                        continue  # unfabricably thin (or exactly black) -> skip
+
                     rows.append({
                         "image_index": img_idx,
                         "alpha_deg": alpha_deg,
@@ -278,24 +369,140 @@ def build_layer_table() -> pd.DataFrame:
                         "natural_blur_deg": gamma_nat_deg,
                         "macro_pixel_row": row,
                         "macro_pixel_col": col,
+                        "num_macro_pixels_x": num_macro_pixels_x,
+                        "num_macro_pixels_y": num_macro_pixels_y,
+                        "cell_col_index": cell_col_index,
+                        "cell_row_index": cell_row_index,
                         "macro_pixel_pitch_um": MACRO_PIXEL_PITCH_UM,
                         "elementary_grating_size_um": GRATING_SIZE_UM,
-                        "pixel_intensity_norm": channel_plane[row, col],
-                        "duty_cycle": duty_cycle_plane[row, col],
+                        "pixel_intensity_norm": intensity,
+                        "duty_cycle": duty_cycle,
                     })
 
     df = pd.DataFrame(rows)
-    return df
+    return df, num_macro_pixels_x, num_macro_pixels_y
+
+
+def write_fabrication_summary(df: pd.DataFrame, num_macro_pixels_x: int,
+                               num_macro_pixels_y: int, path: str) -> None:
+    """
+    Writes a plain-text summary of the fabrication-relevant ranges in the
+    table -- period, duty cycle, resulting line/gap width, and write area --
+    meant to be handed to fab technicians so they can pick a process/tool
+    (e-beam, DMD/UV projection, etc.) capable of resolving the smallest
+    feature and covering the total write area.
+    """
+    pitch_um = float(df["macro_pixel_pitch_um"].iloc[0])
+    grating_size_um = float(df["elementary_grating_size_um"].iloc[0])
+
+    line_width_um = df["duty_cycle"] * df["period_um"]
+    gap_width_um = df["period_um"] - line_width_um
+
+    # Nominal canvas: the full derived macro-pixel grid, including any
+    # all-black margin that was skipped.
+    nominal_width_mm = num_macro_pixels_x * pitch_um / 1000.0
+    nominal_height_mm = num_macro_pixels_y * pitch_um / 1000.0
+
+    # Actual content bounding box: the smallest rectangle (in macro-pixel
+    # cells) that contains EVERY grating that was actually written, however
+    # sparse. Resize antialiasing (LANCZOS) can leave a handful of isolated
+    # near-black (but not exactly black) macro-pixels scattered well outside
+    # the visually dense object -- this box includes those, so it's a
+    # worst-case / upper-bound extent, not a good write-area estimate.
+    col_min, col_max = int(df["macro_pixel_col"].min()), int(df["macro_pixel_col"].max())
+    row_min, row_max = int(df["macro_pixel_row"].min()), int(df["macro_pixel_row"].max())
+    content_width_mm = (col_max - col_min + 1) * pitch_um / 1000.0
+    content_height_mm = (row_max - row_min + 1) * pitch_um / 1000.0
+
+    # Dense content bounding box: trims the 0.5% sparsest columns/rows on
+    # each side (i.e. keeps the middle 99% of gratings by position). This is
+    # a much more realistic write-area estimate, since it isn't skewed by a
+    # handful of stray outlier pixels the way the box above can be.
+    col_lo, col_hi = df["macro_pixel_col"].quantile([0.005, 0.995])
+    row_lo, row_hi = df["macro_pixel_row"].quantile([0.005, 0.995])
+    dense_width_mm = (col_hi - col_lo) * pitch_um / 1000.0
+    dense_height_mm = (row_hi - row_lo) * pitch_um / 1000.0
+    num_outlier_gratings = int((
+        (df["macro_pixel_col"] < col_lo) | (df["macro_pixel_col"] > col_hi) |
+        (df["macro_pixel_row"] < row_lo) | (df["macro_pixel_row"] > row_hi)
+    ).sum())
+
+    periods_table = (
+        df[["image_index", "alpha_deg", "channel", "wavelength_nm", "period_um"]]
+        .drop_duplicates()
+        .sort_values(["image_index", "channel"])
+    )
+
+    lines = []
+    lines.append("RAINBOW HOLOGRAM -- FABRICATION SUMMARY")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append("Purpose: reference numbers for choosing a lithography process/tool")
+    lines.append("(minimum resolvable feature, alignment, and total write area).")
+    lines.append("")
+    lines.append("-- WRITE AREA --")
+    lines.append(f"Macro-pixel pitch: {pitch_um:.3f} um")
+    lines.append(f"Macro-pixel grid (nominal, full canvas): "
+                  f"{num_macro_pixels_x} x {num_macro_pixels_y} cells "
+                  f"({nominal_width_mm:.3f} mm x {nominal_height_mm:.3f} mm)")
+    lines.append(f"Full content bounding box (every grating, incl. isolated outliers): "
+                  f"{col_max - col_min + 1} x {row_max - row_min + 1} cells "
+                  f"({content_width_mm:.3f} mm x {content_height_mm:.3f} mm)")
+    lines.append(f"Dense content bounding box (middle 99% of gratings -- RECOMMENDED "
+                  f"write-area estimate): {dense_width_mm:.3f} mm x {dense_height_mm:.3f} mm "
+                  f"({num_outlier_gratings} of {len(df)} gratings fall outside this box, "
+                  f"scattered in the sparse margin)")
+    lines.append(f"Elementary grating size: {grating_size_um:.3f} um x {grating_size_um:.3f} um")
+    lines.append(f"Total individual gratings to write: {len(df)}")
+    lines.append("")
+    lines.append("-- GRATING PERIOD (d) -- fixed per image + color channel --")
+    lines.append(f"Min period: {df['period_um'].min():.4f} um")
+    lines.append(f"Max period: {df['period_um'].max():.4f} um")
+    lines.append("")
+    lines.append("Full breakdown (15 combinations):")
+    lines.append(periods_table.to_string(index=False))
+    lines.append("")
+    lines.append("-- DUTY CYCLE (h/d) -- varies per pixel, encodes brightness --")
+    lines.append(f"Min duty cycle: {df['duty_cycle'].min():.4f}")
+    lines.append(f"Max duty cycle: {df['duty_cycle'].max():.4f}")
+    lines.append("(Theoretical max from the physics: 0.5)")
+    lines.append("")
+    lines.append("-- RESULTING FEATURE WIDTHS -- this is what the tool must resolve --")
+    lines.append(f"Min line width  (duty_cycle x period): {line_width_um.min():.4f} um")
+    lines.append(f"Max line width  (duty_cycle x period): {line_width_um.max():.4f} um")
+    lines.append(f"Min gap width   (period - line width): {gap_width_um.min():.4f} um")
+    lines.append(f"Max gap width   (period - line width): {gap_width_um.max():.4f} um")
+    lines.append("")
+    lines.append("-- NOTES / CAVEATS --")
+    lines.append(f"- A generic sanity floor of MIN_LINE_WIDTH_UM = {MIN_LINE_WIDTH_UM} um is already")
+    lines.append("  applied: any pixel whose line width would fall below that is skipped, so the")
+    lines.append("  min line width above should never be absurdly thin (e.g. sub-nanometer). This")
+    lines.append("  is a generic floor, not your chosen process's real resolution -- once a process")
+    lines.append("  is picked, tighten it to match (e.g. ~1.5 um for the DMD/UV tool discussed).")
+    lines.append("- Sign convention: d*(sin(alpha)+sin(beta)) = lambda, alpha and beta on")
+    lines.append("  the same side of the substrate normal. Verify against the real")
+    lines.append("  illumination/observation geometry before fabrication.")
+    lines.append("- These ranges are the true (non-quantized) physical values from the")
+    lines.append("  design. A downstream GDS-generation step may quantize duty cycle to a")
+    lines.append("  handful of discrete levels to keep the file small, but the equipment")
+    lines.append("  still needs to resolve the min/max feature widths listed above.")
+    lines.append("- Curvature correction (R/G/B blur) and proximity-effect dose correction")
+    lines.append("  are not applied at this stage.")
+
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main():
-    df = build_layer_table()
+    df, num_macro_pixels_x, num_macro_pixels_y = build_layer_table()
     df.to_csv(OUTPUT_CSV_PATH, index=False)
 
-    grid_x = df["macro_pixel_col"].nunique()
-    grid_y = df["macro_pixel_row"].nunique()
+    total_possible_rows = len(IMAGE_PATHS) * 3 * num_macro_pixels_x * num_macro_pixels_y
+    skipped_rows = total_possible_rows - len(df)
     print(f"Wrote {len(df)} rows to {OUTPUT_CSV_PATH}")
-    print(f"({len(IMAGE_PATHS)} images x 3 channels x {grid_x}x{grid_y} macro-pixels)")
+    print(f"({len(IMAGE_PATHS)} images x 3 channels x "
+          f"{num_macro_pixels_x}x{num_macro_pixels_y} macro-pixels grid; "
+          f"{skipped_rows} rows skipped as black/unfabricably thin "
+          f"(<{MIN_LINE_WIDTH_UM} um line))")
 
     # Quick sanity printout: the 15 fixed periods, one per (image, channel).
     summary = (
@@ -306,6 +513,9 @@ def main():
     )
     print("\nFixed periods per (image, channel):")
     print(summary.to_string(index=False))
+
+    write_fabrication_summary(df, num_macro_pixels_x, num_macro_pixels_y, FAB_SUMMARY_TXT_PATH)
+    print(f"\nWrote fabrication summary to {FAB_SUMMARY_TXT_PATH}")
 
 
 if __name__ == "__main__":
