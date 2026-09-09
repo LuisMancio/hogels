@@ -1,16 +1,5 @@
 RAINBOW HOLOGRAM -- FABRICATION SUMMARY
-============================================================
 
-Purpose: reference numbers for choosing a lithography process/tool
-(minimum resolvable feature, alignment, and total write area).
-
--- WRITE AREA --
-Macro-pixel pitch: 60.000 um
-Macro-pixel grid (nominal, full canvas): 720 x 400 cells (43.200 mm x 24.000 mm)
-Full content bounding box (every grating, incl. isolated outliers): 594 x 179 cells (35.640 mm x 10.740 mm)
-Dense content bounding box (middle 99% of gratings -- RECOMMENDED write-area estimate): 34.140 mm x 8.280 mm (5835 of 329411 gratings fall outside this box, scattered in the sparse margin)
-Elementary grating size: 5.000 um x 5.000 um
-Total individual gratings to write: 329411
 
 -- GRATING PERIOD (d) -- fixed per image + color channel --
 Min period: 0.5336 um
@@ -34,29 +23,14 @@ Full breakdown (15 combinations):
            5       10.0       G          540.0   0.613110
            5       10.0       R          620.0   0.703942
 
--- DUTY CYCLE (h/d) -- varies per pixel, encodes brightness --
+-- DUTY CYCLE (h/d)  --
 Min duty cycle: 0.1727
-Max duty cycle: 0.4074
-(Theoretical max from the physics: 0.5)
+Max duty cycle: 0.4007
 
--- RESULTING FEATURE WIDTHS -- this is what the tool must resolve --
+
+-- RESULTING FEATURE WIDTHS --
 Min line width  (duty_cycle x period): 0.2003 um
-Max line width  (duty_cycle x period): 0.4246 um
-Min gap width   (period - line width): 0.3209 um
+Max line width  (duty_cycle x period): 0.4170 um
+Min gap width   (period - line width): 0.3231 um
 Max gap width   (period - line width): 0.9615 um
 
--- NOTES / CAVEATS --
-- A generic sanity floor of MIN_LINE_WIDTH_UM = 0.2 um is already
-  applied: any pixel whose line width would fall below that is skipped, so the
-  min line width above should never be absurdly thin (e.g. sub-nanometer). This
-  is a generic floor, not your chosen process's real resolution -- once a process
-  is picked, tighten it to match (e.g. ~1.5 um for the DMD/UV tool discussed).
-- Sign convention: d*(sin(alpha)+sin(beta)) = lambda, alpha and beta on
-  the same side of the substrate normal. Verify against the real
-  illumination/observation geometry before fabrication.
-- These ranges are the true (non-quantized) physical values from the
-  design. A downstream GDS-generation step may quantize duty cycle to a
-  handful of discrete levels to keep the file small, but the equipment
-  still needs to resolve the min/max feature widths listed above.
-- Curvature correction (R/G/B blur) and proximity-effect dose correction
-  are not applied at this stage.

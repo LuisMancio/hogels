@@ -20,7 +20,7 @@ usamos curvatura para corregir el blur** (eso queda para una etapa avanzada post
    mini-rejilla correspondiente. Escribe una tabla larga en `rainbow_hologram_layer_table.csv`.
    **No dibuja geometría ni toca GDS.**
 
-3. **Generador de GDS a partir del CSV** — ⏳ pendiente, siguiente paso.
+3. **Generador de GDS a partir del CSV** — ✅ completado .
    Script separado que lea la tabla del paso 2 y dibuje las rejillas reales,
    exportando a `.gds` con `gdsfactory` (verificación con `klayout`).
 
@@ -31,7 +31,7 @@ usamos curvatura para corregir el blur** (eso queda para una etapa avanzada post
    proximidad en el e-beam.
 
 6. **(Avanzado, fuera de alcance por ahora)** Optimización de tamaño de archivo del GDS
-   (estilo GDSII más liviano / GDoeSII).
+   (estilo GDSII más liviano / GDoeSII). (Después de las pruebas, el archivo no tiene un peso considerable)
 
 ## Parámetros experimentales
 
@@ -69,4 +69,4 @@ Optimización: si un píxel es negro, se puede saltar directamente (zona vacía)
 
 ## Estado actual
 - Etapa 2 (`rainbow_grattings_generator.py`) funcional.
-- Próximo paso: diseñar e implementar el script de la etapa 3 (CSV → GDS).
+- Diseñar e implementar el script de la etapa 3 (CSV → GDS) funcional.
