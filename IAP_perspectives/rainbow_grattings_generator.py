@@ -152,7 +152,7 @@ MACRO_PIXEL_PITCH_UM = 60.0
 # renders (e.g. 720x400) are NOT squashed into a square grid.
 # Example: a 720x400 source image (aspect 1.8:1) with
 # NUM_MACRO_PIXELS_X = 36 gives NUM_MACRO_PIXELS_Y = 20 (36/1.8 = 20).
-NUM_MACRO_PIXELS_X = 250
+NUM_MACRO_PIXELS_X = 720
 
 # Minimum fabricable grating line width (micrometers). Any pixel whose
 # duty_cycle * period_um would produce a thinner line than this is skipped
@@ -164,13 +164,13 @@ NUM_MACRO_PIXELS_X = 250
 # resolution -- e.g. if you end up on the 1.5 um DMD/UV tool discussed in
 # the project notes, you'd want this closer to 1.5 um (and likely also
 # revisit the grating period itself, see fabrication summary caveats).
-MIN_LINE_WIDTH_UM = 0.1
+MIN_LINE_WIDTH_UM = 0.200
 
 # Whether to convert pixel values from sRGB (gamma-encoded -- what PNGs,
 # including Blender renders, normally store) to linear light before treating
 # them as I/I0 in the duty cycle formula. Physically more correct; set to
 # False to use the raw sRGB values directly instead.
-LINEARIZE_SRGB = True
+LINEARIZE_SRGB = False
 
 # Output table path.
 OUTPUT_CSV_PATH = "rainbow_hologram_layer_table.csv"

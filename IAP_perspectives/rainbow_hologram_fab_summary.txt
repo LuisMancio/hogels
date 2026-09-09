@@ -6,11 +6,11 @@ Purpose: reference numbers for choosing a lithography process/tool
 
 -- WRITE AREA --
 Macro-pixel pitch: 60.000 um
-Macro-pixel grid (nominal, full canvas): 250 x 139 cells (15.000 mm x 8.340 mm)
-Full content bounding box (every grating, incl. isolated outliers): 206 x 63 cells (12.360 mm x 3.780 mm)
-Dense content bounding box (middle 99% of gratings -- RECOMMENDED write-area estimate): 11.700 mm x 2.820 mm (687 of 43100 gratings fall outside this box, scattered in the sparse margin)
+Macro-pixel grid (nominal, full canvas): 720 x 400 cells (43.200 mm x 24.000 mm)
+Full content bounding box (every grating, incl. isolated outliers): 594 x 179 cells (35.640 mm x 10.740 mm)
+Dense content bounding box (middle 99% of gratings -- RECOMMENDED write-area estimate): 34.140 mm x 8.280 mm (5835 of 329411 gratings fall outside this box, scattered in the sparse margin)
 Elementary grating size: 5.000 um x 5.000 um
-Total individual gratings to write: 43100
+Total individual gratings to write: 329411
 
 -- GRATING PERIOD (d) -- fixed per image + color channel --
 Min period: 0.5336 um
@@ -35,18 +35,18 @@ Full breakdown (15 combinations):
            5       10.0       R          620.0   0.703942
 
 -- DUTY CYCLE (h/d) -- varies per pixel, encodes brightness --
-Min duty cycle: 0.0866
-Max duty cycle: 0.3872
+Min duty cycle: 0.1727
+Max duty cycle: 0.4074
 (Theoretical max from the physics: 0.5)
 
 -- RESULTING FEATURE WIDTHS -- this is what the tool must resolve --
-Min line width  (duty_cycle x period): 0.1001 um
-Max line width  (duty_cycle x period): 0.4283 um
-Min gap width   (period - line width): 0.3741 um
-Max gap width   (period - line width): 1.0615 um
+Min line width  (duty_cycle x period): 0.2003 um
+Max line width  (duty_cycle x period): 0.4246 um
+Min gap width   (period - line width): 0.3209 um
+Max gap width   (period - line width): 0.9615 um
 
 -- NOTES / CAVEATS --
-- A generic sanity floor of MIN_LINE_WIDTH_UM = 0.1 um is already
+- A generic sanity floor of MIN_LINE_WIDTH_UM = 0.2 um is already
   applied: any pixel whose line width would fall below that is skipped, so the
   min line width above should never be absurdly thin (e.g. sub-nanometer). This
   is a generic floor, not your chosen process's real resolution -- once a process
